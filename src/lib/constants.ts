@@ -36,6 +36,15 @@ export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
 
 export const OPEN_ASSIGNMENT_STATUSES: readonly AssignmentStatus[] = ["pending", "received", "not_received", "in_progress"];
 
+/** Assignments shown in headers, tables, and assignee chips (excludes superseded / cancelled only). */
+export const LISTED_ASSIGNMENT_STATUSES: readonly AssignmentStatus[] = [
+  "pending",
+  "received",
+  "not_received",
+  "in_progress",
+  "completed",
+];
+
 export const ACTIVITY_TYPES = [
   "task_created",
   "task_updated",
@@ -52,6 +61,9 @@ export const ACTIVITY_TYPES = [
   "follow_up_completed",
   "task_completed",
   "task_cancelled",
+  "task_reopened",
+  "task_member_added",
+  "task_member_removed",
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 
@@ -98,4 +110,9 @@ export const ACTIVITY_LABELS: Record<ActivityType, string> = {
   follow_up_completed: "Follow-up Completed",
   task_completed: "Completed",
   task_cancelled: "Cancelled",
+  task_reopened: "Reopened",
+  task_member_added: "Member added",
+  task_member_removed: "Member removed",
 };
+
+export const NOTIFICATION_PAGE_SIZE = 10;

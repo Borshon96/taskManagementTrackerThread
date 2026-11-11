@@ -1,17 +1,34 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ActivityTimeline } from "@/components/ActivityTimeline";
+import { buildAssignmentThreadActions } from "@/lib/assignment-thread";
 import { AssignmentChain } from "@/components/AssignmentChain";
-import { Avatar, PriorityBadge, StatusBadge, UserChip } from "@/components/ui";
+import { AssigneeListInline } from "@/components/AssigneeList";
+import { Avatar } from "@/components/ui";
 import { AppError } from "@/lib/errors";
-import { formatDateTime, formatDueDate } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
+import { listChannelMemberIds } from "@/server/channels";
 import { requirePageUser } from "@/server/session";
 import { getTaskDetail, type TaskDetail } from "@/server/task-queries";
+import { getDb } from "@/db";
 import { listActiveUsers } from "@/server/users";
-import { Composer } from "./Composer";
+import { TaskThread } from "./TaskThread";
+import { ReopenTask } from "./ReopenTask";
 import { TaskActions } from "./TaskActions";
+import { SyncTaskChannel } from "@/components/ActiveChannelContext";
+import { parseNotificationMark, parseTaskFocus } from "@/lib/notification-link";
+import {
+  markRead,
+  markReadByFocus,
+  markReadByFocusLoose,
+  markReadLatestForTask,
+  markReadLatestUnread,
+} from "@/server/notifications";
+import { TaskHeader } from "./TaskHeader";
 
 type Params = Promise<{ id: string }>;
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export const dynamic = "force-dynamic";
 
 function load(user: Awaited<ReturnType<typeof requirePageUser>>, id: string): TaskDetail {
   const taskId = Number(id);
@@ -25,156 +42,222 @@ function load(user: Awaited<ReturnType<typeof requirePageUser>>, id: string): Ta
 }
 
 export async function generateMetadata({ params }: { params: Params }) {
-  return { title: `Task #${(await params).id} · Task Tracker` };
+  const user = await requirePageUser();
+  const id = (await params).id;
+  try {
+    const { task, channel } = getTaskDetail(user, Number(id));
+    return { title: `${task.title} · ${channel.name}` };
+  } catch {
+    return { title: `Task #${id} · Task Tracker` };
+  }
 }
 
-export default async function TaskPage({ params }: { params: Params }) {
+export default async function TaskPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
   const user = await requirePageUser();
+  const rawSearch = await searchParams;
+  const focusTarget = parseTaskFocus(rawSearch.focus);
+  const highlightFromNotification = rawSearch.from === "notification";
+  const taskId = Number((await params).id);
+  const notificationMarkId = parseNotificationMark(rawSearch.notificationId);
+  if (notificationMarkId) {
+    markRead(user, notificationMarkId);
+  } else if (rawSearch.from === "notification") {
+    if (focusTarget) {
+      const marked =
+        markReadByFocus(user, taskId, focusTarget) ||
+        markReadByFocusLoose(user, focusTarget) ||
+        markReadLatestForTask(user, taskId);
+      if (!marked) markReadLatestUnread(user);
+    } else {
+      markReadLatestForTask(user, taskId) || markReadLatestUnread(user);
+    }
+  }
   const detail = load(user, (await params).id);
-  const { task, primary, permissions } = detail;
+  const { task, channel, primary, permissions } = detail;
+  const memberIds = new Set(listChannelMemberIds(getDb(), task.channelId));
   const others = listActiveUsers()
-    .filter((u) => u.id !== user.id)
+    .filter((u) => u.id !== user.id && memberIds.has(u.id))
     .map((u) => ({ id: u.id, name: u.name }));
   const locked = task.status === "completed" || task.status === "cancelled";
+  const needsAttention =
+    detail.myAcknowledgements.length > 0 || detail.myFollowUps.length > 0 || permissions.statusOptions.length > 0;
+
+  const taskActionsProps = {
+    taskId: task.id,
+    task: {
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      dueDate: task.dueDate,
+      currentAssignee: task.currentAssignee,
+    },
+    statusOptions: permissions.statusOptions,
+    canAssign: permissions.canAssign,
+    canEdit: permissions.canEdit,
+    openFollowUps: detail.openFollowUps,
+    myAcknowledgements: detail.myAcknowledgements,
+    myFollowUps: detail.myFollowUps,
+    assignees: others,
+  };
 
   return (
-    <div>
-      <Link href="/" className="text-sm text-slate-500 hover:text-slate-900">
-        ← Back to tasks
-      </Link>
+    <div className="mx-auto flex w-full max-w-6xl flex-col pb-4">
+      <SyncTaskChannel channelId={channel.id} />
+      <div className="space-y-3">
+        <Link href={`/channels/${channel.id}`} className="text-sm text-slate-500 hover:text-slate-900">
+          ← Back to {channel.name}
+        </Link>
 
-      <header className="card mt-2 p-4">
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-sm text-slate-400">#{task.id}</span>
-              <StatusBadge status={task.status} />
-              {task.priority !== "normal" && <PriorityBadge priority={task.priority} />}
-            </div>
-            <h1 className="mt-1 text-xl font-semibold text-slate-900">{task.title}</h1>
-          </div>
-        </div>
-        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
-          <Meta label="Created by">
-            <UserChip name={detail.creatorName} id={task.createdBy} />
-          </Meta>
-          <Meta label="Created">{formatDateTime(task.createdAt)}</Meta>
-          <Meta label="Current assignee">
-            <UserChip name={detail.assigneeName} id={task.currentAssignee} />
-          </Meta>
-          <Meta label="Assigned">{primary ? formatDateTime(primary.assignedAt) : "—"}</Meta>
-          <Meta label="Received">
-            {primary?.receivedAt ? (
-              formatDateTime(primary.receivedAt)
-            ) : primary ? (
-              <span className="text-amber-700">{primary.status === "not_received" ? "Marked Not Received" : "Awaiting"}</span>
-            ) : (
-              "—"
-            )}
-          </Meta>
-          <Meta label={task.completedAt ? "Completed" : "Due date"}>
-            {task.completedAt ? (
-              <span className="text-emerald-700">
-                {formatDateTime(task.completedAt)}
-                {detail.completedByName && <span className="block text-xs text-slate-500">by {detail.completedByName}</span>}
-              </span>
-            ) : task.dueDate ? (
-              formatDueDate(task.dueDate)
-            ) : (
-              "—"
-            )}
-          </Meta>
-        </dl>
-      </header>
+        <TaskHeader
+        channelId={channel.id}
+        channelName={channel.name}
+        taskId={task.id}
+        title={task.title}
+        description={task.description}
+        status={task.status}
+        priority={task.priority}
+        dueDate={task.dueDate}
+        completedAt={task.completedAt}
+        createdBy={task.createdBy}
+        creatorName={detail.creatorName}
+        canEdit={permissions.canEdit}
+        locked={locked}
+        activeAssignees={detail.activeAssignees}
+        assigneeName={detail.assigneeName}
+        taskMembers={detail.taskMembers}
+        taskMemberInvitees={detail.taskMemberInvitees}
+        canManageMembers={permissions.canManageMembers}
+        reopenedFrom={detail.reopenedFrom}
+        continuedAs={detail.continuedAs}
+        />
+      </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-4">
-          <section className="card p-4">
-            <h2 className="mb-2 text-sm font-semibold">Description</h2>
-            {task.description ? (
-              <p className="whitespace-pre-wrap text-sm text-slate-700">{task.description}</p>
-            ) : (
-              <p className="text-sm text-slate-400">No description.</p>
-            )}
-          </section>
-
-          <section className="card p-4" aria-label="Activity and thread">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Activity &amp; thread</h2>
-              <span className="text-xs text-slate-500">{detail.activities.length} events · oldest first</span>
-            </div>
-            <ActivityTimeline activities={detail.activities} />
-            <div className="mt-4">
-              {locked ? (
-                <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 shrink-0" aria-hidden>
-                    <path d="M10 2a4 4 0 0 0-4 4v2H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-1V6a4 4 0 0 0-4-4Zm-2 6V6a2 2 0 1 1 4 0v2H8Z" />
-                  </svg>
-                  This task is {task.status}. Its history is locked and kept permanently.
-                </div>
-              ) : (
-                permissions.canMessage && (
-                  <Composer
-                    taskId={task.id}
-                    participants={detail.participants}
-                    users={others}
-                    canFollowUp={permissions.canFollowUp}
-                  />
-                )
-              )}
-            </div>
-          </section>
-        </div>
-
-        <aside className="space-y-4">
-          <TaskActions
+      <div className="mt-3 flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_min(280px,28vw)] lg:items-start lg:gap-4">
+        <section className="card flex min-w-0 flex-col overflow-hidden p-3 sm:p-4" aria-label="Activity and thread">
+          <TaskThread
             taskId={task.id}
-            task={{
-              title: task.title,
-              description: task.description,
-              priority: task.priority,
-              dueDate: task.dueDate,
-              currentAssignee: task.currentAssignee,
-            }}
-            statusOptions={permissions.statusOptions}
-            canAssign={permissions.canAssign}
-            canEdit={permissions.canEdit}
-            openFollowUps={detail.openFollowUps}
-            myAcknowledgements={detail.myAcknowledgements}
-            myFollowUps={detail.myFollowUps}
-            assignees={others}
+            activities={detail.activities}
+            assignmentActions={buildAssignmentThreadActions(detail)}
+            participants={detail.participants}
+            users={others}
+            canFollowUp={permissions.canFollowUp}
+            canMessage={permissions.canMessage}
+            locked={locked}
+            currentUserId={user.id}
+            focusTarget={focusTarget}
+            highlightFromNotification={highlightFromNotification}
+            assignments={detail.assignments.map((a) => ({ id: a.id, status: a.status }))}
+            myPendingAssignmentIds={detail.myAcknowledgements.map((a) => a.id)}
           />
+        </section>
 
-          <section className="card p-4" aria-label="Assignment chain">
-            <h2 className="mb-3 text-sm font-semibold">Assignment chain</h2>
-            <AssignmentChain
-              creator={{ id: task.createdBy, name: detail.creatorName }}
-              createdAt={task.createdAt}
-              assignments={detail.assignments}
-            />
-            {task.completedAt && (
-              <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 text-sm">
-                <Avatar name={detail.completedByName} id={task.completedBy} size="md" />
-                <div>
-                  <div className="font-medium text-emerald-700">Task completed</div>
-                  <div className="text-xs text-slate-500">
-                    {detail.completedByName} · {formatDateTime(task.completedAt)}
+        <aside className="flex min-w-0 flex-col gap-3">
+          <details className="card group lg:hidden" open={needsAttention}>
+            <summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">
+              <span className="inline-flex items-center gap-2">
+                Actions
+                {needsAttention && (
+                  <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-800">Needs you</span>
+                )}
+              </span>
+            </summary>
+            <div className="border-t border-slate-100 px-3 pb-3 pt-1">
+              {permissions.canReopen && <ReopenTask taskId={task.id} />}
+              <TaskActions {...taskActionsProps} />
+            </div>
+          </details>
+
+          <details className="card lg:hidden">
+            <summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">
+              Details &amp; assignments
+            </summary>
+            <div className="border-t border-slate-100 px-3 pb-3 pt-2 text-sm">
+              <TaskDetailsBody detail={detail} task={task} primary={primary} />
+              <h3 className="mb-2 mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Assignment chain</h3>
+              <AssignmentChain
+                creator={{ id: task.createdBy, name: detail.creatorName }}
+                createdAt={task.createdAt}
+                assignments={detail.assignments}
+              />
+            </div>
+          </details>
+
+          <div className="hidden space-y-3 lg:block">
+            {permissions.canReopen && <ReopenTask taskId={task.id} />}
+            <TaskActions {...taskActionsProps} />
+            <section className="card p-3" aria-label="Assignment chain">
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Details</h2>
+              <TaskDetailsBody detail={detail} task={task} primary={primary} compact />
+              <h3 className="mb-2 mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Assignments</h3>
+              <AssignmentChain
+                creator={{ id: task.createdBy, name: detail.creatorName }}
+                createdAt={task.createdAt}
+                assignments={detail.assignments}
+              />
+              {task.completedAt && (
+                <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 text-sm">
+                  <Avatar name={detail.completedByName} id={task.completedBy} size="md" />
+                  <div>
+                    <div className="font-medium text-emerald-700">Task completed</div>
+                    <div className="text-xs text-slate-500">
+                      {detail.completedByName} · {formatDateTime(task.completedAt)}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </section>
+              )}
+            </section>
+          </div>
         </aside>
       </div>
     </div>
   );
 }
 
-function Meta({ label, children }: { label: string; children: React.ReactNode }) {
+function TaskDetailsBody({
+  detail,
+  task,
+  primary,
+  compact,
+}: {
+  detail: TaskDetail;
+  task: TaskDetail["task"];
+  primary: TaskDetail["primary"];
+  compact?: boolean;
+}) {
   return (
-    <div className="min-w-0">
-      <dt className="text-xs text-slate-500">{label}</dt>
-      <dd className="mt-0.5 text-slate-800">{children}</dd>
-    </div>
+    <dl className={`grid gap-2 text-sm ${compact ? "gap-1.5 text-xs" : "grid-cols-2"}`}>
+      <div>
+        <dt className="text-slate-500">Created</dt>
+        <dd className="text-slate-800">{formatDateTime(task.createdAt)}</dd>
+      </div>
+      {primary && (
+        <div>
+          <dt className="text-slate-500">Assigned</dt>
+          <dd className="text-slate-800">{formatDateTime(primary.assignedAt)}</dd>
+        </div>
+      )}
+      {primary && (
+        <div>
+          <dt className="text-slate-500">Main received</dt>
+          <dd className="text-slate-800">
+            {primary.receivedAt ? (
+              formatDateTime(primary.receivedAt)
+            ) : primary.status === "not_received" ? (
+              <span className="text-rose-700">Not received</span>
+            ) : (
+              <span className="text-amber-700">Awaiting</span>
+            )}
+          </dd>
+        </div>
+      )}
+      {!compact && detail.activeAssignees.length > 1 && (
+        <div className="col-span-2">
+          <dt className="text-slate-500">Everyone on this task</dt>
+          <dd className="mt-0.5">
+            <AssigneeListInline assignees={detail.activeAssignees} fallbackName={detail.assigneeName} />
+          </dd>
+        </div>
+      )}
+    </dl>
   );
 }

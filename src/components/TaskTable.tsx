@@ -2,16 +2,31 @@ import Link from "next/link";
 import type { TaskPriority } from "@/lib/constants";
 import { formatDate, formatDateTime, formatDueDate, formatRelative, todayInAppZone } from "@/lib/format";
 import type { TaskRow } from "@/server/task-queries";
+import { AssigneeListCompact } from "./AssigneeList";
 import { ClickableRow } from "./ClickableRow";
 import { PriorityBadge, StatusBadge, UserChip } from "./ui";
 
-export function TaskTable({ rows }: { rows: TaskRow[] }) {
+export function TaskTable({
+  rows,
+  channelId,
+  heading,
+  muted,
+  emptyMessage = "No tasks match these filters.",
+}: {
+  rows: TaskRow[];
+  channelId?: number;
+  heading?: string;
+  muted?: boolean;
+  emptyMessage?: string;
+}) {
   const today = todayInAppZone();
+  const newTaskHref = channelId ? `/tasks/new?channel=${channelId}` : "/tasks/new";
   if (rows.length === 0) {
+    if (heading) return null;
     return (
       <div className="card px-6 py-12 text-center text-sm text-slate-500">
-        No tasks match these filters.{" "}
-        <Link href="/tasks/new" className="font-medium text-slate-900 underline">
+        {emptyMessage}{" "}
+        <Link href={newTaskHref} className="font-medium text-slate-900 underline">
           Create a task
         </Link>
       </div>
@@ -19,13 +34,21 @@ export function TaskTable({ rows }: { rows: TaskRow[] }) {
   }
 
   return (
-    <div className="card overflow-x-auto">
-      <table className="w-full min-w-[860px] text-sm">
+    <section className={heading ? "space-y-2" : undefined}>
+      {heading && (
+        <h2 className="text-sm font-semibold text-slate-800">
+          {heading}
+          <span className="ml-2 font-normal tabular-nums text-slate-500">({rows.length})</span>
+        </h2>
+      )}
+    <div className={`card overflow-x-auto ${muted ? "border-slate-200 bg-slate-50/40" : ""}`}>
+      <table className="w-full min-w-[980px] text-sm">
         <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
           <tr>
             <th className="px-3 py-2">Task</th>
             <th className="px-3 py-2">Created By</th>
-            <th className="px-3 py-2">Current Assignee</th>
+            <th className="px-3 py-2">Assignees</th>
+            <th className="px-3 py-2">Awaiting</th>
             <th className="px-3 py-2">Status</th>
             <th className="px-3 py-2">Created</th>
             <th className="px-3 py-2">Last Activity</th>
@@ -61,7 +84,26 @@ export function TaskTable({ rows }: { rows: TaskRow[] }) {
                   <UserChip name={t.creatorName} id={t.createdBy} />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-700">
-                  <UserChip name={t.assigneeName} id={t.currentAssignee} />
+                  <AssigneeListCompact
+                    idsCsv={t.activeAssigneeIds}
+                    namesCsv={t.activeAssigneeNames}
+                    fallbackName={t.assigneeName}
+                    fallbackId={t.currentAssignee}
+                  />
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                  {t.status === "completed" || t.status === "cancelled" ? (
+                    <span className="text-slate-300">—</span>
+                  ) : t.awaitingNames ? (
+                    <AssigneeListCompact
+                      idsCsv={t.awaitingIds}
+                      namesCsv={t.awaitingNames}
+                      fallbackName={null}
+                      fallbackId={null}
+                    />
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <StatusBadge status={t.status} />
@@ -82,5 +124,6 @@ export function TaskTable({ rows }: { rows: TaskRow[] }) {
         </tbody>
       </table>
     </div>
+    </section>
   );
 }

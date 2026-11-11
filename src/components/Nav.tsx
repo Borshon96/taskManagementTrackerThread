@@ -5,15 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import type { SessionUser } from "@/server/auth";
 import { api } from "./api";
+import { NotificationDropdown } from "./notifications/NotificationDropdown";
 import { Avatar } from "./ui";
 
 export function Nav({ user, unread }: { user: SessionUser; unread: number }) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
-
   const links = [
-    { href: "/", label: user.role === "admin" ? "Tasks" : "Dashboard" },
     ...(user.role === "admin"
       ? [
           { href: "/admin/users", label: "Users" },
@@ -30,7 +29,7 @@ export function Nav({ user, unread }: { user: SessionUser; unread: number }) {
   }
 
   return (
-    <header className="border-b border-slate-200 bg-white">
+    <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-white/75">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
         <Link href="/" className="flex items-center gap-2 font-semibold">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-900 text-[11px] font-bold text-white">
@@ -50,23 +49,7 @@ export function Nav({ user, unread }: { user: SessionUser; unread: number }) {
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-2">
-          <Link href="/tasks/new" className="btn-primary">
-            <span aria-hidden>+</span> New Task
-          </Link>
-          <Link
-            href="/notifications"
-            className="relative rounded-md p-2 text-slate-600 hover:bg-slate-100"
-            aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}
-          >
-            <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5" aria-hidden>
-              <path d="M10 2a6 6 0 0 0-6 6v2.6l-1.4 2.8A1 1 0 0 0 3.5 15h13a1 1 0 0 0 .9-1.6L16 10.6V8a6 6 0 0 0-6-6Zm0 16a2.5 2.5 0 0 1-2.4-2h4.8A2.5 2.5 0 0 1 10 18Z" />
-            </svg>
-            {unread > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-red-600 px-1 text-center text-[10px] font-semibold leading-4 text-white">
-                {unread > 99 ? "99+" : unread}
-              </span>
-            )}
-          </Link>
+          <NotificationDropdown unread={unread} />
           <div className="relative">
             <button
               type="button"

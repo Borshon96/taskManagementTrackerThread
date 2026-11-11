@@ -1,5 +1,5 @@
 import { getDb } from "../src/db";
-import { users } from "../src/db/schema";
+import { channelMembers, channels, users } from "../src/db/schema";
 import { setClock } from "../src/lib/clock";
 import { hashPassword, type SessionUser } from "../src/server/auth";
 import {
@@ -47,10 +47,40 @@ export async function createSeedUsers() {
 
 export type SeedUsers = Awaited<ReturnType<typeof createSeedUsers>>;
 
+export function createSeedChannels(admin: SessionUser, u: SeedUsers) {
+  const db = getDb();
+  const ts = at("08:00").toISOString();
+  const row = (name: string, description: string) =>
+    db
+      .insert(channels)
+      .values({ name, description, createdBy: admin.id, createdAt: ts, updatedAt: ts })
+      .returning()
+      .get();
+  const add = (channelId: number, userIds: number[]) => {
+    for (const userId of userIds) {
+      db.insert(channelMembers)
+        .values({ channelId, userId, addedBy: admin.id, createdAt: ts })
+        .run();
+    }
+  };
+  const reporting = row("Monthly Reporting", "Executive and status reports, financial roll-ups.");
+  add(reporting.id, [admin.id, u.a.id, u.b.id, u.c.id]);
+  const operations = row("Operations", "Day-to-day operational work and vendor checks.");
+  add(operations.id, [admin.id, u.a.id, u.d.id]);
+  const people = row("People & Onboarding", "HR, onboarding, and internal process updates.");
+  add(people.id, [admin.id, u.a.id, u.b.id, u.c.id]);
+  return { reporting, operations, people };
+}
+
 /** The ten-step "Prepare Project Report" journey from the requirements. */
-export function runProjectReportScenario({ a, b, c }: SeedUsers, hooks: { beforeFollowUpDone?: () => void } = {}) {
+export function runProjectReportScenario(
+  { a, b, c }: SeedUsers,
+  channelId: number,
+  hooks: { beforeFollowUpDone?: () => void } = {},
+) {
   freezeAt(at("09:00"));
   const task = createTask(a, {
+    channelId,
     title: "Prepare Project Report",
     description: "Compile the monthly project report including progress, risks, and the financial summary.",
     priority: "high",
@@ -84,7 +114,7 @@ export function runProjectReportScenario({ a, b, c }: SeedUsers, hooks: { before
   changeTaskStatus(b, task.id, { status: "in_progress" });
 
   freezeAt(at("14:00"));
-  changeTaskStatus(b, task.id, { status: "completed" });
+  changeTaskStatus(a, task.id, { status: "completed" });
 
   setClock(null);
   return { taskId: task.id, primaryId: primary.id, followUpId: followUp.id };

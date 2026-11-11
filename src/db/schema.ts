@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { type AnySQLiteColumn, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 import {
   ACTIVITY_TYPES,
@@ -29,6 +29,42 @@ export const users = sqliteTable(
   (t) => [uniqueIndex("users_email_unique").on(t.email)],
 );
 
+export const channels = sqliteTable(
+  "channels",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    createdBy: integer("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: text("created_at").notNull().default(now),
+    updatedAt: text("updated_at").notNull().default(now),
+  },
+  (t) => [index("channels_created_at_idx").on(t.createdAt)],
+);
+
+export const channelMembers = sqliteTable(
+  "channel_members",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    channelId: integer("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    addedBy: integer("added_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("channel_members_channel_user_unique").on(t.channelId, t.userId),
+    index("channel_members_user_idx").on(t.userId),
+  ],
+);
+
 export const sessions = sqliteTable(
   "sessions",
   {
@@ -47,6 +83,9 @@ export const tasks = sqliteTable(
   "tasks",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    channelId: integer("channel_id")
+      .notNull()
+      .references(() => channels.id),
     title: text("title").notNull(),
     description: text("description").notNull().default(""),
     createdBy: integer("created_by")
@@ -60,12 +99,36 @@ export const tasks = sqliteTable(
     updatedAt: text("updated_at").notNull().default(now),
     completedAt: text("completed_at"),
     completedBy: integer("completed_by").references(() => users.id),
+    reopenedFromTaskId: integer("reopened_from_task_id").references((): AnySQLiteColumn => tasks.id),
   },
   (t) => [
+    index("tasks_channel_idx").on(t.channelId),
+    index("tasks_reopened_from_idx").on(t.reopenedFromTaskId),
     index("tasks_status_idx").on(t.status),
     index("tasks_created_by_idx").on(t.createdBy),
     index("tasks_current_assignee_idx").on(t.currentAssignee),
     index("tasks_created_at_idx").on(t.createdAt),
+  ],
+);
+
+export const taskMembers = sqliteTable(
+  "task_members",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    taskId: integer("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    addedBy: integer("added_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("task_members_task_user_unique").on(t.taskId, t.userId),
+    index("task_members_user_idx").on(t.userId),
   ],
 );
 
@@ -107,10 +170,37 @@ export const taskMessages = sqliteTable(
       .references(() => users.id),
     recipientId: integer("recipient_id").references(() => users.id),
     assignmentId: integer("assignment_id").references(() => taskAssignments.id),
+    parentMessageId: integer("parent_message_id").references((): AnySQLiteColumn => taskMessages.id),
+    parentActivityId: integer("parent_activity_id").references(() => taskActivities.id),
+    inReplyToMessageId: integer("in_reply_to_message_id").references((): AnySQLiteColumn => taskMessages.id),
+    inReplyToActivityId: integer("in_reply_to_activity_id").references(() => taskActivities.id),
     message: text("message").notNull(),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [index("task_messages_task_idx").on(t.taskId, t.createdAt), index("task_messages_sender_idx").on(t.senderId)],
+  (t) => [
+    index("task_messages_task_idx").on(t.taskId, t.createdAt),
+    index("task_messages_sender_idx").on(t.senderId),
+    index("task_messages_parent_idx").on(t.parentMessageId),
+    index("task_messages_parent_activity_idx").on(t.parentActivityId),
+    index("task_messages_in_reply_message_idx").on(t.inReplyToMessageId),
+    index("task_messages_in_reply_activity_idx").on(t.inReplyToActivityId),
+  ],
+);
+
+export const messageAttachments = sqliteTable(
+  "message_attachments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    messageId: integer("message_id")
+      .notNull()
+      .references(() => taskMessages.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storageKey: text("storage_key").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [index("message_attachments_message_idx").on(t.messageId)],
 );
 
 export const taskActivities = sqliteTable(
@@ -142,6 +232,8 @@ export const notifications = sqliteTable(
       .notNull()
       .references(() => users.id),
     taskId: integer("task_id").references(() => tasks.id),
+    activityId: integer("activity_id").references(() => taskActivities.id),
+    messageId: integer("message_id").references(() => taskMessages.id),
     type: text("type").notNull(),
     title: text("title").notNull(),
     body: text("body").notNull().default(""),
@@ -152,8 +244,11 @@ export const notifications = sqliteTable(
 );
 
 export type User = typeof users.$inferSelect;
+export type Channel = typeof channels.$inferSelect;
+export type ChannelMember = typeof channelMembers.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskAssignment = typeof taskAssignments.$inferSelect;
 export type TaskMessage = typeof taskMessages.$inferSelect;
 export type TaskActivity = typeof taskActivities.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
+export type MessageAttachment = typeof messageAttachments.$inferSelect;

@@ -9,7 +9,7 @@ import { AppError } from "../src/lib/errors";
 import * as queries from "../src/server/task-queries";
 import * as service from "../src/server/tasks";
 import { createUser, deleteUser, updateUser } from "../src/server/users";
-import { at, createSeedUsers, freezeAt, runProjectReportScenario } from "./scenario";
+import { at, createSeedChannels, createSeedUsers, freezeAt, runProjectReportScenario } from "./scenario";
 
 const tmpDir = path.resolve("data/tmp");
 fs.mkdirSync(tmpDir, { recursive: true });
@@ -38,14 +38,15 @@ function expectError(fn: () => unknown, status: number, pattern?: RegExp) {
 async function main() {
 try {
   const u = await createSeedUsers();
-  const { a, b, c, d } = u;
+  const { admin, a, b, c, d } = u;
+  const channelId = createSeedChannels(admin, u).reporting.id;
   const db = getDb();
 
   console.log("Project Report scenario");
-  const { taskId, primaryId, followUpId } = runProjectReportScenario(u, {
+  const { taskId, primaryId, followUpId } = runProjectReportScenario(u, channelId, {
     beforeFollowUpDone: () => {
       freezeAt(at("10:30"));
-      expectError(() => service.changeTaskStatus(b, 1001, { status: "completed" }), 409, /open follow-up/);
+      expectError(() => service.changeTaskStatus(a, 1001, { status: "completed" }), 409, /open follow-up/);
       expectError(() => service.updateFollowUpStatus(b, 1001, 2, { status: "completed" }), 403);
     },
   });
@@ -53,9 +54,9 @@ try {
   check("task ids start at 1001", () => assert.equal(taskId, 1001));
 
   const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get()!;
-  check("task is completed by User B at 14:00", () => {
+  check("task is completed by User A (creator) at 14:00", () => {
     assert.equal(task.status, "completed");
-    assert.equal(task.completedBy, b.id);
+    assert.equal(task.completedBy, a.id);
     assert.equal(task.completedAt, at("14:00").toISOString());
     assert.equal(task.createdBy, a.id);
     assert.equal(task.currentAssignee, b.id);
@@ -90,7 +91,7 @@ try {
   check("each step names the responsible user", () => {
     assert.deepEqual(
       activities.map((x) => x.userId),
-      [a.id, a.id, b.id, b.id, a.id, b.id, c.id, c.id, c.id, b.id, b.id],
+      [a.id, a.id, b.id, b.id, a.id, b.id, c.id, c.id, c.id, b.id, a.id],
     );
   });
 
@@ -109,7 +110,7 @@ try {
     assert.equal(activities[2].description, "User B received the task from User A");
     assert.equal(activities[5].description, "User B assigned a follow-up action to User C: “Please provide the financial data.”");
     assert.equal(activities[9].description, "User B changed status from Received to In Progress");
-    assert.equal(activities[10].description, "User B marked Task #1001 as Completed");
+    assert.equal(activities[10].description, "User A marked Task #1001 as Completed");
   });
 
   const assignments = db.select().from(taskAssignments).where(eq(taskAssignments.taskId, taskId)).orderBy(asc(taskAssignments.id)).all();
@@ -194,7 +195,7 @@ try {
   setClock(null);
 
   check("Not Received is recorded without changing the task status, and can be followed by Received", () => {
-    const t = service.createTask(a, { title: "Collect signatures", assigneeId: d.id });
+    const t = service.createTask(a, { channelId, title: "Collect signatures", assigneeId: d.id });
     const asg = db.select().from(taskAssignments).where(eq(taskAssignments.taskId, t.id)).get()!;
     service.acknowledgeAssignment(d, t.id, asg.id, { response: "not_received", note: "I was not given the folder." });
     assert.equal(db.select().from(tasks).where(eq(tasks.id, t.id)).get()!.status, "assigned");
@@ -208,7 +209,7 @@ try {
   });
 
   check("reassignment supersedes the previous assignment and keeps it", () => {
-    const t = service.createTask(a, { title: "Draft policy", assigneeId: b.id });
+    const t = service.createTask(a, { channelId, title: "Draft policy", assigneeId: b.id });
     service.assignTask(a, t.id, { assigneeId: c.id, instruction: "B is on leave" });
     const rows = db.select().from(taskAssignments).where(eq(taskAssignments.taskId, t.id)).orderBy(asc(taskAssignments.id)).all();
     assert.deepEqual(
@@ -225,8 +226,25 @@ try {
     expectError(() => service.changeTaskStatus(b, t.id, { status: "cancelled" }), 403);
   });
 
+  check("message thread depth promotes and blocks own nested reply", () => {
+    const t = service.createTask(a, { channelId, title: "Threading", assigneeId: b.id });
+    const created = db
+      .select()
+      .from(taskActivities)
+      .where(eq(taskActivities.taskId, t.id))
+      .all()
+      .find((x) => x.activityType === "task_created")!;
+    const m1 = service.addMessage(b, t.id, { message: "thanks", parentActivityId: created.id });
+    const m2 = service.addMessage(a, t.id, { message: "welcome", parentMessageId: m1.id });
+    expectError(() => service.addMessage(b, t.id, { message: "self", parentMessageId: m1.id }), 403, /nested/);
+    const m3 = service.addMessage(b, t.id, { message: "follow up", parentMessageId: m2.id });
+    const deep = db.select().from(taskMessages).where(eq(taskMessages.id, m3.id)).get()!;
+    assert.equal(deep.parentMessageId, null);
+    assert.equal(deep.inReplyToMessageId, m2.id);
+  });
+
   check("permissions are enforced", () => {
-    const t = service.createTask(a, { title: "Book venue", assigneeId: b.id });
+    const t = service.createTask(a, { channelId, title: "Book venue", assigneeId: b.id });
     expectError(() => service.assignTask(a, t.id, { assigneeId: a.id }), 400, /yourself/);
     expectError(() => service.addMessage(d, t.id, { message: "hi" }), 404);
     expectError(() => service.addMessage(a, t.id, { message: "fyi", recipientId: d.id }), 400, /people on this task/);
@@ -238,6 +256,11 @@ try {
     const edit = db.select().from(taskActivities).where(eq(taskActivities.taskId, t.id)).all().at(-1)!;
     assert.equal(edit.activityType, "task_updated");
     assert.deepEqual((edit.metadata as { changes: unknown }).changes, { title: { from: "Book venue", to: "Book venue for offsite" } });
+    const asgB = db.select().from(taskAssignments).where(eq(taskAssignments.taskId, t.id)).get()!;
+    service.acknowledgeAssignment(b, t.id, asgB.id, { response: "received" });
+    expectError(() => service.changeTaskStatus(b, t.id, { status: "cancelled" }), 403, /created this task/);
+    service.changeTaskStatus(a, t.id, { status: "cancelled" });
+    assert.equal(db.select().from(tasks).where(eq(tasks.id, t.id)).get()!.status, "cancelled");
   });
 
   await (async () => {
@@ -256,8 +279,8 @@ try {
       password: "changeme123",
       role: "user",
     });
-    const onlyTheirs = service.createTask(disposable, { title: "Disposable task", assigneeId: a.id });
-    const shared = service.createTask(a, { title: "Shared with disposable", assigneeId: disposable.id });
+    const onlyTheirs = service.createTask(disposable, { channelId, title: "Disposable task", assigneeId: a.id });
+    const shared = service.createTask(a, { channelId, title: "Shared with disposable", assigneeId: disposable.id });
     service.addMessage(a, shared.id, { message: "Please handle", recipientId: disposable.id });
 
     const summary = deleteUser(u.admin, disposable.id);
@@ -277,6 +300,38 @@ try {
     passed += 1;
     console.log("  ok  deleting a user removes their tasks and related history");
   })();
+
+  check("reopen creates a new task and preserves closed history", () => {
+    const before = activities.length;
+    const { task: reopened, sourceTaskId } = service.reopenTask(a, taskId, { note: "Need another cycle" });
+    assert.equal(sourceTaskId, taskId);
+    assert.equal(reopened.status, "new");
+    assert.equal(reopened.reopenedFromTaskId, taskId);
+    assert.equal(reopened.createdBy, a.id);
+    assert.equal(reopened.channelId, channelId);
+    assert.equal(reopened.title, task.title);
+
+    const closed = db.select().from(tasks).where(eq(tasks.id, taskId)).get()!;
+    assert.equal(closed.status, "completed");
+
+    const sourceActs = db
+      .select()
+      .from(taskActivities)
+      .where(eq(taskActivities.taskId, taskId))
+      .orderBy(asc(taskActivities.createdAt), asc(taskActivities.id))
+      .all();
+    assert.equal(sourceActs.length, before + 1);
+    assert.equal(sourceActs.at(-1)?.activityType, "task_reopened");
+
+    const newActs = db.select().from(taskActivities).where(eq(taskActivities.taskId, reopened.id)).all();
+    assert.equal(newActs.length, 1);
+    assert.equal(newActs[0]?.activityType, "task_created");
+    assert.equal(newActs[0]?.metadata?.reopenedFromTaskId, taskId);
+
+    const detail = queries.getTaskDetail(a, taskId);
+    assert.equal(detail.continuedAs?.id, reopened.id);
+    assert.equal(queries.getTaskDetail(a, reopened.id).reopenedFrom?.id, taskId);
+  });
 
   check("dashboard counts reflect each user's work", () => {
     const counts = queries.dashboardCounts(d);

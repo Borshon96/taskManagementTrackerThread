@@ -22,6 +22,83 @@
       "when": 1794328005200,
       "tag": "0002_user_delete_cascade",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794371395442,
+      "tag": "0003_minor_garia",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794371970657,
+      "tag": "0004_ancient_guardian",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794372856810,
+      "tag": "0005_mute_carmella_unuscione",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794375707643,
+      "tag": "0006_sad_victor_mancha",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794378000000,
+      "tag": "0007_message_parent",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794379000000,
+      "tag": "0008_message_parent_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794380000000,
+      "tag": "0009_message_in_reply_to",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1794381000000,
+      "tag": "0010_task_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1794382000000,
+      "tag": "0011_task_admin_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794383000000,
+      "tag": "0012_task_project_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1794384000000,
+      "tag": "0013_notification_focus",
+      "breakpoints": true
     }
   ]
 }

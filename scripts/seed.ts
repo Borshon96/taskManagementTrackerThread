@@ -4,7 +4,7 @@ import { closeDb, dbPath, getDb } from "../src/db";
 import { taskAssignments, users } from "../src/db/schema";
 import { setClock } from "../src/lib/clock";
 import { acknowledgeAssignment, addMessage, assignFollowUp, changeTaskStatus, createTask } from "../src/server/tasks";
-import { at, createSeedUsers, DEFAULT_PASSWORD, freezeAt, runProjectReportScenario } from "./scenario";
+import { at, createSeedChannels, createSeedUsers, DEFAULT_PASSWORD, freezeAt, runProjectReportScenario } from "./scenario";
 
 const reset = process.argv.includes("--reset");
 const file = dbPath();
@@ -21,12 +21,14 @@ if (getDb().select({ id: users.id }).from(users).get()) {
 
 async function main() {
   const seedUsers = await createSeedUsers();
-  const { a, b, c, d } = seedUsers;
+  const { admin, a, b, c, d } = seedUsers;
+  const projects = createSeedChannels(admin, seedUsers);
 
-  const scenario = runProjectReportScenario(seedUsers);
+  const scenario = runProjectReportScenario(seedUsers, projects.reporting.id);
 
   freezeAt(at("15:10"));
   const invoices = createTask(a, {
+    channelId: projects.operations.id,
     title: "Verify vendor invoices",
     description: "Check October vendor invoices against purchase orders.",
     dueDate: "2026-11-14",
@@ -36,6 +38,7 @@ async function main() {
 
   freezeAt(at("16:20"));
   const onboarding = createTask(b, {
+    channelId: projects.people.id,
     title: "Update onboarding checklist",
     description: "Refresh the checklist with the new IT access steps.",
     priority: "low",

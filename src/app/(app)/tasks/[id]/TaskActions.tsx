@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/components/api";
+import { AssignmentThreadCard } from "@/components/AssignmentThreadCard";
 import { ConfirmDialog, Dialog } from "@/components/Dialog";
-import { PRIORITY_LABELS, TASK_PRIORITIES, TASK_STATUS_LABELS, type TaskPriority, type TaskStatus } from "@/lib/constants";
+import { TASK_STATUS_LABELS, type TaskPriority, type TaskStatus } from "@/lib/constants";
 
 type PendingAck = { id: number; assignmentType: "primary" | "follow_up"; assignedByName: string; instruction: string | null; status: string };
 type MyFollowUp = { id: number; status: string; assignedByName: string; instruction: string | null };
@@ -46,14 +47,7 @@ function useAction() {
 export function TaskActions(props: TaskActionsProps) {
   const { taskId, statusOptions, myAcknowledgements, myFollowUps } = props;
   const { busy, error, setError, run } = useAction();
-  const [dialog, setDialog] = useState<
-    | null
-    | { kind: "not_received"; assignmentId: number }
-    | { kind: "complete_follow_up"; assignmentId: number }
-    | { kind: "status"; status: TaskStatus }
-    | { kind: "reassign" }
-    | { kind: "edit" }
-  >(null);
+  const [dialog, setDialog] = useState<null | { kind: "status"; status: TaskStatus } | { kind: "reassign" }>(null);
   const [note, setNote] = useState("");
   const [assignee, setAssignee] = useState("");
 
@@ -68,7 +62,7 @@ export function TaskActions(props: TaskActionsProps) {
 
   const base = `/api/tasks/${taskId}`;
   const hasAnything =
-    myAcknowledgements.length > 0 || myFollowUps.length > 0 || statusOptions.length > 0 || props.canAssign || props.canEdit;
+    myAcknowledgements.length > 0 || myFollowUps.length > 0 || statusOptions.length > 0 || props.canAssign;
   if (!hasAnything) return null;
 
   const quickStatuses = statusOptions.filter((s) => s === "in_progress" || s === "waiting");
@@ -78,52 +72,33 @@ export function TaskActions(props: TaskActionsProps) {
       <h2 className="mb-3 text-sm font-semibold">Actions</h2>
 
       {myAcknowledgements.map((a) => (
-        <div key={a.id} className="mb-3 rounded-md border border-blue-200 bg-blue-50/60 p-3 text-sm">
-          <div className="font-medium text-blue-900">
-            {a.assignmentType === "primary" ? "This task is assigned to you" : "A follow-up is assigned to you"}
-          </div>
-          <div className="text-xs text-blue-800">
-            From {a.assignedByName}
-            {a.status === "not_received" && " · you marked it Not Received"}
-          </div>
-          {a.instruction && <div className="mt-1 text-sm italic text-slate-700">“{a.instruction}”</div>}
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={busy}
-              onClick={() => run(`${base}/assignments/${a.id}/acknowledge`, { response: "received" })}
-            >
-              Received
-            </button>
-            {a.status !== "not_received" && (
-              <button type="button" className="btn-secondary" disabled={busy} onClick={() => open({ kind: "not_received", assignmentId: a.id })}>
-                Not Received
-              </button>
-            )}
-          </div>
+        <div key={a.id} className="mb-3">
+          <AssignmentThreadCard
+            taskId={taskId}
+            action={{
+              mode: "acknowledge",
+              assignmentId: a.id,
+              assignmentType: a.assignmentType,
+              assignedByName: a.assignedByName,
+              instruction: a.instruction,
+              status: a.status,
+            }}
+          />
         </div>
       ))}
 
       {myFollowUps.map((f) => (
-        <div key={f.id} className="mb-3 rounded-md border border-violet-200 bg-violet-50/60 p-3 text-sm">
-          <div className="font-medium text-violet-900">Your follow-up for {f.assignedByName}</div>
-          {f.instruction && <div className="mt-1 italic text-slate-700">“{f.instruction}”</div>}
-          <div className="mt-2 flex flex-wrap gap-2">
-            {f.status === "received" && (
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={busy}
-                onClick={() => run(`${base}/assignments/${f.id}/status`, { status: "in_progress" })}
-              >
-                Start (In Progress)
-              </button>
-            )}
-            <button type="button" className="btn-success" disabled={busy} onClick={() => open({ kind: "complete_follow_up", assignmentId: f.id })}>
-              Complete follow-up
-            </button>
-          </div>
+        <div key={f.id} className="mb-3">
+          <AssignmentThreadCard
+            taskId={taskId}
+            action={{
+              mode: "follow_up",
+              assignmentId: f.id,
+              assignedByName: f.assignedByName,
+              instruction: f.instruction,
+              status: f.status,
+            }}
+          />
         </div>
       ))}
 
@@ -164,18 +139,11 @@ export function TaskActions(props: TaskActionsProps) {
         </div>
       )}
 
-      {(props.canAssign || props.canEdit) && (
+      {props.canAssign && (
         <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-          {props.canAssign && (
-            <button type="button" className="btn-secondary" disabled={busy} onClick={() => open({ kind: "reassign" })}>
-              {props.task.currentAssignee ? "Reassign" : "Assign"}
-            </button>
-          )}
-          {props.canEdit && (
-            <button type="button" className="btn-secondary" disabled={busy} onClick={() => open({ kind: "edit" })}>
-              Edit details
-            </button>
-          )}
+          <button type="button" className="btn-secondary" disabled={busy} onClick={() => open({ kind: "reassign" })}>
+            {props.task.currentAssignee ? "Reassign" : "Assign"}
+          </button>
         </div>
       )}
 
@@ -184,40 +152,6 @@ export function TaskActions(props: TaskActionsProps) {
           {error}
         </p>
       )}
-
-      <ConfirmDialog
-        open={dialog?.kind === "not_received"}
-        title="Mark as Not Received?"
-        message="This is recorded permanently in the task history. You can still mark it Received later."
-        confirmLabel="Mark Not Received"
-        tone="danger"
-        busy={busy}
-        onClose={close}
-        onConfirm={async () =>
-          dialog?.kind === "not_received" &&
-          done(await run(`${base}/assignments/${dialog.assignmentId}/acknowledge`, { response: "not_received", note }))
-        }
-      >
-        <NoteField value={note} onChange={setNote} label="Reason (optional)" />
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      </ConfirmDialog>
-
-      <ConfirmDialog
-        open={dialog?.kind === "complete_follow_up"}
-        title="Complete this follow-up?"
-        message="The person who requested it will be notified."
-        confirmLabel="Complete follow-up"
-        tone="success"
-        busy={busy}
-        onClose={close}
-        onConfirm={async () =>
-          dialog?.kind === "complete_follow_up" &&
-          done(await run(`${base}/assignments/${dialog.assignmentId}/status`, { status: "completed", note }))
-        }
-      >
-        <NoteField value={note} onChange={setNote} label="Reply (optional)" placeholder="e.g. Financial data uploaded." />
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      </ConfirmDialog>
 
       <ConfirmDialog
         open={dialog?.kind === "status"}
@@ -290,9 +224,6 @@ export function TaskActions(props: TaskActionsProps) {
         </form>
       </Dialog>
 
-      <Dialog open={dialog?.kind === "edit"} onClose={close} title="Edit task details">
-        <EditForm task={props.task} busy={busy} error={error} onCancel={close} onSave={async (body) => done(await run(base, body, "PATCH"))} />
-      </Dialog>
     </section>
   );
 }
@@ -322,72 +253,5 @@ function NoteField({
         />
       </label>
     </div>
-  );
-}
-
-function EditForm({
-  task,
-  busy,
-  error,
-  onCancel,
-  onSave,
-}: {
-  task: TaskActionsProps["task"];
-  busy: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onSave: (body: Record<string, FormDataEntryValue>) => void;
-}) {
-  return (
-    <form
-      className="space-y-3"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave(Object.fromEntries(new FormData(e.currentTarget)));
-      }}
-    >
-      <div>
-        <label htmlFor="edit-title" className="label">
-          Title
-        </label>
-        <input id="edit-title" name="title" required maxLength={200} defaultValue={task.title} className="input" />
-      </div>
-      <div>
-        <label htmlFor="edit-description" className="label">
-          Description
-        </label>
-        <textarea id="edit-description" name="description" rows={5} defaultValue={task.description} className="input" />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label htmlFor="edit-priority" className="label">
-            Priority
-          </label>
-          <select id="edit-priority" name="priority" defaultValue={task.priority} className="input">
-            {TASK_PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {PRIORITY_LABELS[p]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="edit-due" className="label">
-            Due date
-          </label>
-          <input id="edit-due" name="dueDate" type="date" defaultValue={task.dueDate ?? ""} className="input" />
-        </div>
-      </div>
-      <p className="text-xs text-slate-500">Previous values are kept in the activity history.</p>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <button type="button" className="btn-secondary" onClick={onCancel}>
-          Cancel
-        </button>
-        <button type="submit" className="btn-primary" disabled={busy}>
-          Save
-        </button>
-      </div>
-    </form>
   );
 }

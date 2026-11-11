@@ -9,6 +9,7 @@ const VIEW_LABELS: Record<string, string> = {
   assigned: "Assigned to me",
   created: "Created by me",
   pending_ack: "Pending acknowledgement",
+  awaiting: "Awaiting acknowledgement (anyone)",
   in_progress: "In progress",
   completed: "Completed",
 };
@@ -17,10 +18,12 @@ export function TaskFilters({
   filters,
   users,
   isAdmin,
+  basePath = "/",
 }: {
   filters: Filters;
   users: { id: number; name: string }[];
   isAdmin: boolean;
+  basePath?: string;
 }) {
   const active =
     filters.q || filters.status || filters.assigneeId || filters.creatorId || filters.from || filters.to || filters.view !== "all";
@@ -51,6 +54,7 @@ export function TaskFilters({
         <select id="status" name="status" defaultValue={filters.status ?? ""} className="input">
           <option value="">Any status</option>
           <option value="open">Any open</option>
+          <option value="closed">Completed &amp; cancelled</option>
           {TASK_STATUSES.map((s) => (
             <option key={s} value={s}>
               {TASK_STATUS_LABELS[s]}
@@ -101,7 +105,7 @@ export function TaskFilters({
           Apply
         </button>
         {active && (
-          <Link href="/" className="btn-secondary">
+          <Link href={basePath} className="btn-secondary">
             Reset
           </Link>
         )}

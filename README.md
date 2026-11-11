@@ -60,7 +60,7 @@ Task #1001 "Prepare Project Report" contains the full reference journey: User A 
 - Creating a task records `task_created`, and the creator may assign it right away.
 - A new primary assignment marks the previous one `superseded` and never removes it. The first assignment sets the task to Assigned, and later ones set it to Reassigned.
 - Only the assignee can respond Received or Not Received. Not Received is recorded and leaves the task status unchanged, so they can still mark Received later.
-- The creator, the current assignee, or an admin can move a received task to In Progress, Waiting, Completed, or Cancelled. A task cannot be completed while any follow-up is still open.
+- The creator, the current assignee, or an admin can move a received task to In Progress or Waiting. Only the creator (or an admin) can mark it Completed or Cancelled. A task cannot be completed while any follow-up is still open.
 - Follow-ups live inside the parent task. The person they are assigned to can mark them Received, Not Received, In Progress, and Completed, and every one of those events is recorded on the parent task.
 - Completed and cancelled tasks are read-only. Their messages, assignments, and activities stay visible.
 - Normal users see tasks they created, were assigned (including follow-ups), assigned to someone else, or messaged on. Admins see everything.
